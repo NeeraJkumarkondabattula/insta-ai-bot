@@ -111,7 +111,7 @@ If the comment expresses negative sentiment (e.g., complaint, disappointment, po
           },
           {
             role: "user",
-            content: `Instagram user ${username} commented: "${comment}"`,
+            content: `Instagram user ${`@` + username} commented: "${comment}"`,
           },
         ],
       },
