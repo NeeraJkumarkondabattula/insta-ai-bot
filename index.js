@@ -13,21 +13,8 @@ const {
   IG_USERNAME,
 } = process.env;
 
-const replyTracker = {}; // parentCommentId -> Set of commentIds AI replied to
-
-// 🔗 Check if user is asking for a link
-function isAskingForLink(text) {
-  const lower = text.toLowerCase();
-  return (
-    lower.includes("link") ||
-    lower.includes("buy") ||
-    lower.includes("website") ||
-    lower.includes("url") ||
-    lower.includes("how to buy") ||
-    lower.includes("where can i get") ||
-    (lower.includes("send") && lower.includes("link"))
-  );
-}
+// ⏱ Track replied threads
+const repliedThreads = new Set(); // Set of parent comment IDs
 
 // ✅ Webhook verification
 app.get("/webhook", (req, res) => {
@@ -43,7 +30,7 @@ app.get("/webhook", (req, res) => {
   }
 });
 
-// 📦 Handle webhook POST
+// 📦 Webhook handler
 app.post("/webhook", async (req, res) => {
   const body = req.body;
 
@@ -54,46 +41,36 @@ app.post("/webhook", async (req, res) => {
           const value = change.value;
           const commentText = value.text;
           const commentId = value.id;
-          const username = value.from?.username;
           const parentId = value.parent_id || value.id;
+          const username = value.from?.username;
 
           console.log("💬 Comment:", commentText);
           console.log("👤 From:", username);
-          console.log("🧷 Parent ID:", parentId);
-          console.log("🆔 Comment ID:", commentId);
+          console.log("🧵 Thread ID:", parentId);
 
-          // ⛔ 1. Skip if comment is from our own page
+          // ⛔ Skip if comment is from our account
           if (username === IG_USERNAME) {
-            console.log("⛔ Skipping: Comment is from page owner.");
+            console.log("⛔ Skipping: Comment from own account.");
             continue;
           }
 
-          // ⛔ 2. Skip if asking for link
+          // ⛔ Skip if already replied to this thread
+          if (repliedThreads.has(parentId)) {
+            console.log("⛔ Skipping: Already replied in this thread.");
+            continue;
+          }
+
+          // ⛔ Skip if asking for a link
           if (isAskingForLink(commentText)) {
-            console.log("⛔ Skipping: Comment is a link request.");
+            console.log("⛔ Skipping: Comment asking for link.");
             continue;
           }
 
-          // Initialize tracker for this parent
-          if (!replyTracker[parentId]) replyTracker[parentId] = new Set();
-
-          // ⛔ 3. Skip if we've already replied to this specific comment
-          if (replyTracker[parentId].has(commentId)) {
-            console.log("⛔ Skipping: Already replied to this comment.");
-            continue;
-          }
-
-          // ⛔ 4. Skip if AI already replied 2 times in this thread
-          if (replyTracker[parentId].size >= 2) {
-            console.log("⛔ Skipping: Max 2 replies reached for thread.");
-            continue;
-          }
-
-          // ✅ 5. Generate and send reply
+          // ✅ Generate and send reply
           const reply = await generateReply(commentText, username);
           if (reply) {
             await replyToComment(commentId, reply);
-            replyTracker[parentId].add(commentId); // track that we replied
+            repliedThreads.add(parentId);
           }
         }
       }
@@ -104,18 +81,33 @@ app.post("/webhook", async (req, res) => {
   return res.sendStatus(404);
 });
 
-// 🧠 Generate AI reply
+// 🔍 Check for link-related keywords
+function isAskingForLink(text) {
+  const lower = text.toLowerCase();
+  return (
+    lower.includes("link") ||
+    lower.includes("buy") ||
+    lower.includes("website") ||
+    lower.includes("url") ||
+    lower.includes("how to buy") ||
+    lower.includes("where can i get") ||
+    (lower.includes("send") && lower.includes("link"))
+  );
+}
+
+// 🧠 Generate reply from OpenAI
 async function generateReply(comment, username) {
   try {
     const response = await axios.post(
       "https://api.openai.com/v1/chat/completions",
       {
-        model: "gpt-4o", // Change to gpt-4 or gpt-4.5 if needed
+        model: "gpt-4o",
         messages: [
           {
             role: "system",
-            content:
-              "You are a helpful and friendly assistant for an Instagram brand. Keep replies polite, short, and professional.",
+            content: `At Reginald Men, we are committed to providing friendly, clear, and helpful replies to Instagram comments. 
+If the comment expresses negative sentiment (e.g., complaint, disappointment, poor experience), always reply:
+"For better assistance, please DM us your Order ID, phone number, and issue in detail — we’ll help you right away.`,
           },
           {
             role: "user",
@@ -141,10 +133,9 @@ async function generateReply(comment, username) {
   }
 }
 
-// 💬 Reply to comment
+// 💬 Reply to Instagram comment
 async function replyToComment(commentId, message) {
   if (!message) return;
-
   try {
     const url = `https://graph.facebook.com/v19.0/${commentId}/replies`;
     const res = await axios.post(url, {
