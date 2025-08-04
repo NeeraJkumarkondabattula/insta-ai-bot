@@ -1,37 +1,44 @@
 const express = require("express");
-const bodyParser = require("body-parser");
 const axios = require("axios");
 require("dotenv").config();
 
 const app = express();
-app.use(bodyParser.json());
+
+// ✅ Use only express.json
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 
-const { OPENAI_API_KEY, INSTAGRAM_PAGE_ACCESS_TOKEN, VERIFY_TOKEN } =
-  process.env;
+// ✅ Debug log middleware
+app.use((req, res, next) => {
+  console.log("➡️ Webhook received:");
+  console.log("Headers:", JSON.stringify(req.headers, null, 2));
+  console.log("Body:", JSON.stringify(req.body, null, 2));
+  next();
+});
 
-// For webhook verification
+const { OPENAI_API_KEY, INSTAGRAM_PAGE_ACCESS_TOKEN } = process.env;
+
+// ✅ Webhook verification
 app.get("/webhook", (req, res) => {
   const mode = req.query["hub.mode"];
   const token = req.query["hub.verify_token"];
   const challenge = req.query["hub.challenge"];
 
   if (mode === "subscribe" && token === process.env.VERIFY_TOKEN) {
-    console.log("Webhook verified!");
-    res.status(200).send(challenge); // <-- Important!
+    console.log("✅ Webhook verified!");
+    res.status(200).send(challenge);
   } else {
     res.sendStatus(403);
   }
 });
 
-// Webhook callback
-app.post("/webhook", (req, res) => {
+// ✅ Handle webhook events
+app.post("/webhook", async (req, res) => {
   const body = req.body;
 
-  if (body.object === "page") {
-    body.entry.forEach((entry) => {
-      entry.changes.forEach((change) => {
+  if (body?.object === "page") {
+    for (const entry of body.entry || []) {
+      for (const change of entry.changes || []) {
         if (change.field === "feed" && change.value.item === "comment") {
           const comment = change.value.message;
           const userId = change.value.sender_id;
@@ -41,10 +48,12 @@ app.post("/webhook", (req, res) => {
           console.log("👤 From User ID:", userId);
           console.log("🆔 Comment ID:", commentId);
 
-          // ➤ Now you can trigger referral logic or store this in DB
+          // ➤ Optional: Auto-reply
+          const reply = await generateReply(comment);
+          await replyToComment(commentId, reply);
         }
-      });
-    });
+      }
+    }
 
     res.status(200).send("EVENT_RECEIVED");
   } else {
@@ -52,7 +61,7 @@ app.post("/webhook", (req, res) => {
   }
 });
 
-// Function: Use OpenAI to generate a reply
+// 🔁 Generate reply using OpenAI
 async function generateReply(comment) {
   try {
     const response = await axios.post(
@@ -62,8 +71,7 @@ async function generateReply(comment) {
         messages: [
           {
             role: "system",
-            content:
-              "You are a helpful customer support assistant for an Instagram page.",
+            content: "You are a helpful Instagram assistant.",
           },
           { role: "user", content: comment },
         ],
@@ -75,27 +83,25 @@ async function generateReply(comment) {
         },
       }
     );
-
     return response.data.choices[0].message.content.trim();
   } catch (error) {
-    console.error("Error generating reply:", error.message);
+    console.error("❌ Error generating reply:", error.message);
     return "Thanks for your comment!";
   }
 }
 
-// Function: Reply to a comment
+// 💬 Reply to a comment
 async function replyToComment(commentId, message) {
   try {
     await axios.post(`https://graph.facebook.com/v19.0/${commentId}/replies`, {
-      message: message,
+      message,
       access_token: INSTAGRAM_PAGE_ACCESS_TOKEN,
     });
-
-    console.log("Replied to comment");
+    console.log("✅ Replied to comment");
   } catch (error) {
-    console.error("Error replying to comment:", error.message);
+    console.error("❌ Error replying:", error.message);
   }
 }
 
 const PORT = process.env.PORT || 3000;
-app.listen(PORT, () => console.log(`Server running on port ${PORT}`));
+app.listen(PORT, () => console.log(`🚀 Server running on port ${PORT}`));
