@@ -13,9 +13,10 @@ const {
   IG_USERNAME,
 } = process.env;
 
-const repliedCount = {}; // commentId: count
+// 🧠 Track reply count per parent comment thread
+const repliedCount = {}; // key: parentId, value: count
 
-// Log middleware
+// 🔍 Log incoming requests
 app.use((req, res, next) => {
   console.log("➡️ Webhook received:");
   console.log("Headers:", JSON.stringify(req.headers, null, 2));
@@ -23,7 +24,7 @@ app.use((req, res, next) => {
   next();
 });
 
-// Webhook verification
+// ✅ Webhook Verification
 app.get("/webhook", (req, res) => {
   const mode = req.query["hub.mode"];
   const token = req.query["hub.verify_token"];
@@ -37,7 +38,7 @@ app.get("/webhook", (req, res) => {
   }
 });
 
-// Webhook handler
+// 📦 Main Webhook Handler
 app.post("/webhook", async (req, res) => {
   const body = req.body;
 
@@ -45,40 +46,45 @@ app.post("/webhook", async (req, res) => {
     for (const entry of body.entry || []) {
       for (const change of entry.changes || []) {
         if (change.field === "comments") {
-          const commentText = change.value.text;
-          const commentId = change.value.id;
-          const username = change.value.from?.username;
-          const parentId = change.value.parent_id || change.value.id;
+          const {
+            text: commentText,
+            id: commentId,
+            from,
+            parent_id,
+          } = change.value;
+          const username = from?.username;
+          const parentId = parent_id || commentId;
 
           console.log("💬 IG Comment:", commentText);
           console.log("👤 From:", username);
           console.log("🆔 Comment ID:", commentId);
+          console.log("🔗 Parent ID:", parentId);
 
-          // ✅ Rule 1: Don't reply to own comments
+          // 1️⃣ Skip if from own business account
           if (username === IG_USERNAME) {
-            console.log("⛔ Skipping: Comment is from the page owner.");
+            console.log("⛔ Skipped: Comment is from business account.");
             continue;
           }
 
-          // ✅ Rule 2: Only reply twice per comment thread
-          if (!repliedCount[parentId]) repliedCount[parentId] = 0;
+          // 2️⃣ Skip if reply count ≥ 2
+          repliedCount[parentId] = repliedCount[parentId] || 0;
           if (repliedCount[parentId] >= 2) {
-            console.log(
-              "⛔ Skipping: Reached max reply count for this comment."
-            );
+            console.log("⛔ Skipped: Max replies already sent.");
             continue;
           }
 
-          // ✅ Rule 3: Check if user is asking for a link
+          // 3️⃣ Skip if user asked for a link
           if (isAskingForLink(commentText)) {
-            console.log("⛔ Skipping: User asked for a link.");
+            console.log("⛔ Skipped: Link-related comment.");
             continue;
           }
 
-          // ✅ Generate and send reply
+          // 4️⃣ Generate AI reply and respond
           const reply = await generateReply(commentText, username);
-          await replyToComment(commentId, reply);
-          repliedCount[parentId]++;
+          if (reply) {
+            await replyToComment(commentId, reply);
+            repliedCount[parentId]++;
+          }
         }
       }
     }
@@ -88,21 +94,22 @@ app.post("/webhook", async (req, res) => {
   return res.sendStatus(404);
 });
 
-// Detect if the comment is a link request
-function isAskingForLink(text) {
+// 🔎 Detect Link-Requesting Intent
+function isAskingForLink(text = "") {
   const lower = text.toLowerCase();
   return (
     lower.includes("link") ||
     lower.includes("buy") ||
     lower.includes("website") ||
     lower.includes("url") ||
-    lower.includes("where can i get") ||
+    lower.includes("how to order") ||
     lower.includes("how to buy") ||
+    lower.includes("where can i get") ||
     (lower.includes("send") && lower.includes("link"))
   );
 }
 
-// Generate AI reply
+// 🤖 Generate AI Reply
 async function generateReply(comment, username) {
   try {
     const response = await axios.post(
@@ -113,17 +120,17 @@ async function generateReply(comment, username) {
           {
             role: "system",
             content:
-              "You are a helpful and friendly Instagram assistant. Keep responses short and positive.",
+              "You are a friendly assistant helping users on an Instagram store. Keep replies short and helpful.",
           },
           {
             role: "user",
-            content: `Instagram user ${username} commented: "${comment}"`,
+            content: `User @${username} commented: "${comment}"`,
           },
         ],
       },
       {
         headers: {
-          Authorization: `Bearer ${(OPENAI_API_KEY || "").trim()}`,
+          Authorization: `Bearer ${OPENAI_API_KEY.trim()}`,
           "Content-Type": "application/json",
         },
       }
@@ -134,14 +141,14 @@ async function generateReply(comment, username) {
       "❌ Error generating reply:",
       error.response?.data || error.message
     );
-    return null; // ⛔ don't return a static reply
+    return null;
   }
 }
 
-// Reply to the comment
+// 💬 Send Reply to Instagram Comment
 async function replyToComment(commentId, message) {
   if (!message) {
-    console.log("⚠️ Skipping reply due to null/invalid message.");
+    console.log("⚠️ Skipped: No reply generated.");
     return;
   }
   try {
@@ -152,10 +159,7 @@ async function replyToComment(commentId, message) {
     });
     console.log("✅ Replied to comment:", res.data);
   } catch (error) {
-    console.error(
-      "❌ Error replying to comment:",
-      error.response?.data || error.message
-    );
+    console.error("❌ Error replying:", error.response?.data || error.message);
   }
 }
 
