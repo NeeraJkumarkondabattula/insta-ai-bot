@@ -24,26 +24,27 @@ app.get("/webhook", (req, res) => {
 });
 
 // Webhook callback
-app.post("/webhook", async (req, res) => {
+app.post("/webhook", (req, res) => {
   const body = req.body;
 
-  if (body.object === "instagram") {
-    const entry = body.entry[0];
-    const changes = entry.changes[0];
+  if (body.object === "page") {
+    body.entry.forEach((entry) => {
+      entry.changes.forEach((change) => {
+        if (change.field === "feed" && change.value.item === "comment") {
+          const comment = change.value.message;
+          const userId = change.value.sender_id;
+          const commentId = change.value.comment_id;
 
-    if (changes.field === "comments") {
-      const commentText = changes.value.message;
-      const commentId = changes.value.comment_id;
-      console.log(`New comment: ${commentText}`);
+          console.log("💬 New Comment:", comment);
+          console.log("👤 From User ID:", userId);
+          console.log("🆔 Comment ID:", commentId);
 
-      // Get AI-generated reply
-      const aiReply = await generateReply(commentText);
+          // ➤ Now you can trigger referral logic or store this in DB
+        }
+      });
+    });
 
-      // Send reply to Instagram
-      await replyToComment(commentId, aiReply);
-    }
-
-    res.sendStatus(200);
+    res.status(200).send("EVENT_RECEIVED");
   } else {
     res.sendStatus(404);
   }
