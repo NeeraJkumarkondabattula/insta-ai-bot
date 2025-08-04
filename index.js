@@ -6,7 +6,7 @@ const app = express();
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 
-// 🔍 Middleware to log all incoming webhook data
+// 🔍 Log incoming webhook data
 app.use((req, res, next) => {
   console.log("➡️ Webhook received:");
   console.log("Headers:", JSON.stringify(req.headers, null, 2));
@@ -17,7 +17,7 @@ app.use((req, res, next) => {
 const { OPENAI_API_KEY, INSTAGRAM_PAGE_ACCESS_TOKEN, VERIFY_TOKEN } =
   process.env;
 
-// ✅ Webhook verification (GET)
+// ✅ Webhook verification
 app.get("/webhook", (req, res) => {
   const mode = req.query["hub.mode"];
   const token = req.query["hub.verify_token"];
@@ -31,7 +31,7 @@ app.get("/webhook", (req, res) => {
   }
 });
 
-// ✅ Unified Webhook Handler (POST)
+// ✅ Main webhook handler
 app.post("/webhook", async (req, res) => {
   const body = req.body;
 
@@ -39,17 +39,30 @@ app.post("/webhook", async (req, res) => {
   if (body?.object === "page") {
     for (const entry of body.entry || []) {
       for (const change of entry.changes || []) {
+        // 💬 FB comment on feed
         if (change.field === "feed" && change.value.item === "comment") {
           const comment = change.value.message;
           const userId = change.value.sender_id;
           const commentId = change.value.comment_id;
 
           console.log("💬 FB Comment:", comment);
-          console.log("👤 From User ID:", userId);
+          console.log("👤 User ID:", userId);
           console.log("🆔 Comment ID:", commentId);
 
           const reply = await generateReply(comment);
           await replyToComment(commentId, reply);
+        }
+
+        // 💬 IG DM (via messages field)
+        if (change.field === "messages" && change.value?.message) {
+          const messageText = change.value.message.text;
+          const senderId = change.value.message.from.id;
+
+          console.log("📩 IG DM:", messageText);
+          console.log("👤 From IG User ID:", senderId);
+
+          const reply = await generateReply(messageText);
+          await replyToDm(senderId, reply);
         }
       }
     }
@@ -82,7 +95,7 @@ app.post("/webhook", async (req, res) => {
   return res.sendStatus(404);
 });
 
-// 🧠 Generate AI reply using OpenAI
+// 🧠 AI-generated reply
 async function generateReply(comment) {
   try {
     const response = await axios.post(
@@ -90,10 +103,7 @@ async function generateReply(comment) {
       {
         model: "gpt-4o",
         messages: [
-          {
-            role: "system",
-            content: "You are a helpful Instagram assistant.",
-          },
+          { role: "system", content: "You are a helpful Instagram assistant." },
           { role: "user", content: comment },
         ],
       },
@@ -107,11 +117,11 @@ async function generateReply(comment) {
     return response.data.choices[0].message.content.trim();
   } catch (error) {
     console.error("❌ Error generating reply:", error.message);
-    return "Thanks for your comment!";
+    return "Thanks for your message!";
   }
 }
 
-// 💬 Reply to a comment
+// 💬 Reply to IG or FB Comment
 async function replyToComment(commentId, message) {
   try {
     await axios.post(`https://graph.facebook.com/v19.0/${commentId}/replies`, {
@@ -120,7 +130,29 @@ async function replyToComment(commentId, message) {
     });
     console.log("✅ Replied to comment");
   } catch (error) {
-    console.error("❌ Error replying:", error.message);
+    console.error("❌ Error replying to comment:", error.message);
+  }
+}
+
+// 📩 Reply to IG Direct Message (DM)
+async function replyToDm(recipientId, message) {
+  try {
+    await axios.post(
+      `https://graph.facebook.com/v19.0/me/messages`,
+      {
+        recipient: { id: recipientId },
+        message: { text: message },
+        messaging_type: "RESPONSE",
+      },
+      {
+        headers: {
+          Authorization: `Bearer ${INSTAGRAM_PAGE_ACCESS_TOKEN}`,
+        },
+      }
+    );
+    console.log("✅ Replied to DM");
+  } catch (error) {
+    console.error("❌ Error replying to DM:", error.message);
   }
 }
 
