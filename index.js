@@ -3,12 +3,10 @@ const axios = require("axios");
 require("dotenv").config();
 
 const app = express();
-
-// ✅ Use only express.json
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 
-// ✅ Debug log middleware
+// 🔍 Middleware to log all incoming webhook data
 app.use((req, res, next) => {
   console.log("➡️ Webhook received:");
   console.log("Headers:", JSON.stringify(req.headers, null, 2));
@@ -16,15 +14,16 @@ app.use((req, res, next) => {
   next();
 });
 
-const { OPENAI_API_KEY, INSTAGRAM_PAGE_ACCESS_TOKEN } = process.env;
+const { OPENAI_API_KEY, INSTAGRAM_PAGE_ACCESS_TOKEN, VERIFY_TOKEN } =
+  process.env;
 
-// ✅ Webhook verification
+// ✅ Webhook verification (GET)
 app.get("/webhook", (req, res) => {
   const mode = req.query["hub.mode"];
   const token = req.query["hub.verify_token"];
   const challenge = req.query["hub.challenge"];
 
-  if (mode === "subscribe" && token === process.env.VERIFY_TOKEN) {
+  if (mode === "subscribe" && token === VERIFY_TOKEN) {
     console.log("✅ Webhook verified!");
     res.status(200).send(challenge);
   } else {
@@ -32,16 +31,11 @@ app.get("/webhook", (req, res) => {
   }
 });
 
-app.post("/webhook", (req, res) => {
-  console.log("➡️ RAW Webhook Body:");
-  console.log(JSON.stringify(req.body, null, 2));
-  res.status(200).send("EVENT_RECEIVED");
-});
-
-// ✅ Handle webhook events
+// ✅ Unified Webhook Handler (POST)
 app.post("/webhook", async (req, res) => {
   const body = req.body;
 
+  // 📘 Facebook Page Comments
   if (body?.object === "page") {
     for (const entry of body.entry || []) {
       for (const change of entry.changes || []) {
@@ -50,24 +44,45 @@ app.post("/webhook", async (req, res) => {
           const userId = change.value.sender_id;
           const commentId = change.value.comment_id;
 
-          console.log("💬 New Comment:", comment);
+          console.log("💬 FB Comment:", comment);
           console.log("👤 From User ID:", userId);
           console.log("🆔 Comment ID:", commentId);
 
-          // ➤ Optional: Auto-reply
           const reply = await generateReply(comment);
           await replyToComment(commentId, reply);
         }
       }
     }
-
-    res.status(200).send("EVENT_RECEIVED");
-  } else {
-    res.sendStatus(404);
+    return res.status(200).send("EVENT_RECEIVED");
   }
+
+  // 📷 Instagram Media Comments
+  if (body?.object === "instagram") {
+    for (const entry of body.entry || []) {
+      for (const change of entry.changes || []) {
+        if (change.field === "media" && change.value?.comment_id) {
+          const commentText = change.value.text;
+          const commentId = change.value.comment_id;
+          const mediaId = change.value.media_id;
+          const username = change.value.username;
+
+          console.log("💬 IG Comment:", commentText);
+          console.log("👤 From:", username);
+          console.log("📸 Media ID:", mediaId);
+
+          const reply = await generateReply(commentText);
+          await replyToComment(commentId, reply);
+        }
+      }
+    }
+    return res.status(200).send("EVENT_RECEIVED");
+  }
+
+  // ❌ Unknown source
+  return res.sendStatus(404);
 });
 
-// 🔁 Generate reply using OpenAI
+// 🧠 Generate AI reply using OpenAI
 async function generateReply(comment) {
   try {
     const response = await axios.post(
