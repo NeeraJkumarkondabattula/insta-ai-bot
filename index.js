@@ -101,7 +101,7 @@ async function generateReply(comment, username) {
     const response = await axios.post(
       "https://api.openai.com/v1/chat/completions",
       {
-        model: "gpt-4o",
+        model: "o4-mini-2025-04-16",
         messages: [
           {
             role: "system",
