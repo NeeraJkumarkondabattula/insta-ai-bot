@@ -32,6 +32,12 @@ app.get("/webhook", (req, res) => {
   }
 });
 
+app.post("/webhook", (req, res) => {
+  console.log("➡️ RAW Webhook Body:");
+  console.log(JSON.stringify(req.body, null, 2));
+  res.status(200).send("EVENT_RECEIVED");
+});
+
 // ✅ Handle webhook events
 app.post("/webhook", async (req, res) => {
   const body = req.body;
