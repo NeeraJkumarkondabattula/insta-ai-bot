@@ -97,7 +97,6 @@ app.post("/webhook", async (req, res) => {
           const reply = await generateReply(commentText, username);
           if (reply) {
             await replyToComment(commentId, reply);
-            registerReply(parentId, commentId);
           }
         }
       }
