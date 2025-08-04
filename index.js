@@ -6,10 +6,16 @@ const app = express();
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 
-const { OPENAI_API_KEY, INSTAGRAM_PAGE_ACCESS_TOKEN, VERIFY_TOKEN } =
-  process.env;
+const {
+  OPENAI_API_KEY,
+  INSTAGRAM_PAGE_ACCESS_TOKEN,
+  VERIFY_TOKEN,
+  IG_USERNAME,
+} = process.env;
 
-// 🔍 Middleware to log all incoming webhook data
+const repliedCount = {}; // commentId: count
+
+// Log middleware
 app.use((req, res, next) => {
   console.log("➡️ Webhook received:");
   console.log("Headers:", JSON.stringify(req.headers, null, 2));
@@ -17,7 +23,7 @@ app.use((req, res, next) => {
   next();
 });
 
-// ✅ Webhook verification (GET)
+// Webhook verification
 app.get("/webhook", (req, res) => {
   const mode = req.query["hub.mode"];
   const token = req.query["hub.verify_token"];
@@ -31,11 +37,10 @@ app.get("/webhook", (req, res) => {
   }
 });
 
-// ✅ Webhook handler (POST)
+// Webhook handler
 app.post("/webhook", async (req, res) => {
   const body = req.body;
 
-  // 📘 Instagram Comments
   if (body?.object === "instagram") {
     for (const entry of body.entry || []) {
       for (const change of entry.changes || []) {
@@ -43,14 +48,37 @@ app.post("/webhook", async (req, res) => {
           const commentText = change.value.text;
           const commentId = change.value.id;
           const username = change.value.from?.username;
+          const parentId = change.value.parent_id || change.value.id;
 
           console.log("💬 IG Comment:", commentText);
           console.log("👤 From:", username);
           console.log("🆔 Comment ID:", commentId);
 
-          // 🧠 Generate AI reply and respond
+          // ✅ Rule 1: Don't reply to own comments
+          if (username === IG_USERNAME) {
+            console.log("⛔ Skipping: Comment is from the page owner.");
+            continue;
+          }
+
+          // ✅ Rule 2: Only reply twice per comment thread
+          if (!repliedCount[parentId]) repliedCount[parentId] = 0;
+          if (repliedCount[parentId] >= 2) {
+            console.log(
+              "⛔ Skipping: Reached max reply count for this comment."
+            );
+            continue;
+          }
+
+          // ✅ Rule 3: Check if user is asking for a link
+          if (isAskingForLink(commentText)) {
+            console.log("⛔ Skipping: User asked for a link.");
+            continue;
+          }
+
+          // ✅ Generate and send reply
           const reply = await generateReply(commentText, username);
           await replyToComment(commentId, reply);
+          repliedCount[parentId]++;
         }
       }
     }
@@ -60,22 +88,36 @@ app.post("/webhook", async (req, res) => {
   return res.sendStatus(404);
 });
 
-// 🧠 Generate AI reply using OpenAI
+// Detect if the comment is a link request
+function isAskingForLink(text) {
+  const lower = text.toLowerCase();
+  return (
+    lower.includes("link") ||
+    lower.includes("buy") ||
+    lower.includes("website") ||
+    lower.includes("url") ||
+    lower.includes("where can i get") ||
+    lower.includes("how to buy") ||
+    (lower.includes("send") && lower.includes("link"))
+  );
+}
+
+// Generate AI reply
 async function generateReply(comment, username) {
   try {
     const response = await axios.post(
       "https://api.openai.com/v1/chat/completions",
       {
-        model: "gpt-4o",
+        model: "gpt-4", // GPT-4.1 in practice for OpenAI API
         messages: [
           {
             role: "system",
             content:
-              "You are a friendly Instagram shop assistant. Respond politely and helpfully.",
+              "You are a helpful and friendly Instagram assistant. Keep responses short, positive, and professional.",
           },
           {
             role: "user",
-            content: `User ${username} commented: "${comment}"`,
+            content: `Instagram user ${username} commented: "${comment}"`,
           },
         ],
       },
@@ -96,7 +138,7 @@ async function generateReply(comment, username) {
   }
 }
 
-// 💬 Reply to the comment
+// Reply to the comment
 async function replyToComment(commentId, message) {
   try {
     const url = `https://graph.facebook.com/v19.0/${commentId}/replies`;
