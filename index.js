@@ -108,12 +108,12 @@ async function generateReply(comment, username) {
     const response = await axios.post(
       "https://api.openai.com/v1/chat/completions",
       {
-        model: "gpt-4", // GPT-4.1 in practice for OpenAI API
+        model: "gpt-4",
         messages: [
           {
             role: "system",
             content:
-              "You are a helpful and friendly Instagram assistant. Keep responses short, positive, and professional.",
+              "You are a helpful and friendly Instagram assistant. Keep responses short and positive.",
           },
           {
             role: "user",
@@ -123,7 +123,7 @@ async function generateReply(comment, username) {
       },
       {
         headers: {
-          Authorization: `Bearer ${OPENAI_API_KEY}`,
+          Authorization: `Bearer ${(OPENAI_API_KEY || "").trim()}`,
           "Content-Type": "application/json",
         },
       }
@@ -134,12 +134,16 @@ async function generateReply(comment, username) {
       "❌ Error generating reply:",
       error.response?.data || error.message
     );
-    return "Thanks for your comment!";
+    return null; // ⛔ don't return a static reply
   }
 }
 
 // Reply to the comment
 async function replyToComment(commentId, message) {
+  if (!message) {
+    console.log("⚠️ Skipping reply due to null/invalid message.");
+    return;
+  }
   try {
     const url = `https://graph.facebook.com/v19.0/${commentId}/replies`;
     const res = await axios.post(url, {
