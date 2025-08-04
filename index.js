@@ -38,34 +38,37 @@ app.post("/webhook", async (req, res) => {
   // 📘 Facebook Page Comments
   if (body?.object === "page") {
     for (const entry of body.entry || []) {
+      for (const messagingEvent of entry.messaging || []) {
+        // 💬 Handle Instagram/Facebook Direct Message
+        if (messagingEvent.message && messagingEvent.sender?.id) {
+          const senderId = messagingEvent.sender.id;
+          const messageText = messagingEvent.message.text;
+
+          console.log("📩 Direct Message:", messageText);
+          console.log("👤 Sender ID:", senderId);
+
+          const reply = await generateReply(messageText);
+          await replyToDm(senderId, reply);
+        }
+      }
+
       for (const change of entry.changes || []) {
-        // 💬 FB comment on feed
+        // 💬 FB Page Comment
         if (change.field === "feed" && change.value.item === "comment") {
           const comment = change.value.message;
           const userId = change.value.sender_id;
           const commentId = change.value.comment_id;
 
           console.log("💬 FB Comment:", comment);
-          console.log("👤 User ID:", userId);
+          console.log("👤 From User ID:", userId);
           console.log("🆔 Comment ID:", commentId);
 
           const reply = await generateReply(comment);
           await replyToComment(commentId, reply);
         }
-
-        // 💬 IG DM (via messages field)
-        if (change.field === "messages" && change.value?.message) {
-          const messageText = change.value.message.text;
-          const senderId = change.value.message.from.id;
-
-          console.log("📩 IG DM:", messageText);
-          console.log("👤 From IG User ID:", senderId);
-
-          const reply = await generateReply(messageText);
-          await replyToDm(senderId, reply);
-        }
       }
     }
+
     return res.status(200).send("EVENT_RECEIVED");
   }
 
