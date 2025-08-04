@@ -13,10 +13,23 @@ const {
   IG_USERNAME,
 } = process.env;
 
-// Track number of replies per parent comment thread
-const replyTracker = {}; // parent_id => Set<commentId>
+const replyTracker = {}; // parentCommentId -> Set of commentIds AI replied to
 
-// Verify webhook
+// 🔗 Check if user is asking for a link
+function isAskingForLink(text) {
+  const lower = text.toLowerCase();
+  return (
+    lower.includes("link") ||
+    lower.includes("buy") ||
+    lower.includes("website") ||
+    lower.includes("url") ||
+    lower.includes("how to buy") ||
+    lower.includes("where can i get") ||
+    (lower.includes("send") && lower.includes("link"))
+  );
+}
+
+// ✅ Webhook verification
 app.get("/webhook", (req, res) => {
   const mode = req.query["hub.mode"];
   const token = req.query["hub.verify_token"];
@@ -30,7 +43,7 @@ app.get("/webhook", (req, res) => {
   }
 });
 
-// Handle webhook event
+// 📦 Handle webhook POST
 app.post("/webhook", async (req, res) => {
   const body = req.body;
 
@@ -38,41 +51,49 @@ app.post("/webhook", async (req, res) => {
     for (const entry of body.entry || []) {
       for (const change of entry.changes || []) {
         if (change.field === "comments") {
-          const { text, id: commentId, parent_id, from } = change.value;
-          const username = from?.username;
-          const parentId = parent_id || commentId;
+          const value = change.value;
+          const commentText = value.text;
+          const commentId = value.id;
+          const username = value.from?.username;
+          const parentId = value.parent_id || value.id;
 
-          console.log("💬 IG Comment:", text);
+          console.log("💬 Comment:", commentText);
           console.log("👤 From:", username);
           console.log("🧷 Parent ID:", parentId);
+          console.log("🆔 Comment ID:", commentId);
 
+          // ⛔ 1. Skip if comment is from our own page
           if (username === IG_USERNAME) {
-            console.log("⛔ Skipping own comment.");
+            console.log("⛔ Skipping: Comment is from page owner.");
             continue;
           }
 
-          if (isAskingForLink(text)) {
-            console.log("⛔ Skipping link-related comment.");
+          // ⛔ 2. Skip if asking for link
+          if (isAskingForLink(commentText)) {
+            console.log("⛔ Skipping: Comment is a link request.");
             continue;
           }
 
-          // Initialize thread tracking
+          // Initialize tracker for this parent
           if (!replyTracker[parentId]) replyTracker[parentId] = new Set();
 
-          if (replyTracker[parentId].size >= 2) {
-            console.log("⛔ Max replies reached for this thread.");
-            continue;
-          }
-
+          // ⛔ 3. Skip if we've already replied to this specific comment
           if (replyTracker[parentId].has(commentId)) {
-            console.log("⛔ Already replied to this comment.");
+            console.log("⛔ Skipping: Already replied to this comment.");
             continue;
           }
 
-          const reply = await generateReply(text, username);
+          // ⛔ 4. Skip if AI already replied 2 times in this thread
+          if (replyTracker[parentId].size >= 2) {
+            console.log("⛔ Skipping: Max 2 replies reached for thread.");
+            continue;
+          }
+
+          // ✅ 5. Generate and send reply
+          const reply = await generateReply(commentText, username);
           if (reply) {
             await replyToComment(commentId, reply);
-            replyTracker[parentId].add(commentId);
+            replyTracker[parentId].add(commentId); // track that we replied
           }
         }
       }
@@ -83,30 +104,18 @@ app.post("/webhook", async (req, res) => {
   return res.sendStatus(404);
 });
 
-function isAskingForLink(text) {
-  const lower = text.toLowerCase();
-  return (
-    lower.includes("link") ||
-    lower.includes("buy") ||
-    lower.includes("website") ||
-    lower.includes("url") ||
-    lower.includes("where can i get") ||
-    lower.includes("how to buy") ||
-    (lower.includes("send") && lower.includes("link"))
-  );
-}
-
+// 🧠 Generate AI reply
 async function generateReply(comment, username) {
   try {
     const response = await axios.post(
       "https://api.openai.com/v1/chat/completions",
       {
-        model: "gpt-4",
+        model: "gpt-4o", // Change to gpt-4 or gpt-4.5 if needed
         messages: [
           {
             role: "system",
             content:
-              "You are a helpful and friendly Instagram assistant. Keep responses short and positive.",
+              "You are a helpful and friendly assistant for an Instagram brand. Keep replies polite, short, and professional.",
           },
           {
             role: "user",
@@ -121,24 +130,33 @@ async function generateReply(comment, username) {
         },
       }
     );
+
     return response.data.choices[0].message.content.trim();
-  } catch (err) {
-    console.error("❌ OpenAI error:", err.response?.data || err.message);
+  } catch (error) {
+    console.error(
+      "❌ Error generating reply:",
+      error.response?.data || error.message
+    );
     return null;
   }
 }
 
+// 💬 Reply to comment
 async function replyToComment(commentId, message) {
   if (!message) return;
+
   try {
     const url = `https://graph.facebook.com/v19.0/${commentId}/replies`;
-    const response = await axios.post(url, {
+    const res = await axios.post(url, {
       message,
       access_token: INSTAGRAM_PAGE_ACCESS_TOKEN,
     });
-    console.log("✅ Replied to comment:", response.data);
-  } catch (err) {
-    console.error("❌ Error replying:", err.response?.data || err.message);
+    console.log("✅ Replied to comment:", res.data);
+  } catch (error) {
+    console.error(
+      "❌ Error replying to comment:",
+      error.response?.data || error.message
+    );
   }
 }
 
